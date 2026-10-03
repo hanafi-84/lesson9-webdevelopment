@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP32 IoT Monitor</title>
+<style>
+  :root {
+    --bg: #0f1419; --card: #1a2129; --line: #2a333d;
+    --text: #e6edf3; --muted: #8b98a5;
+    --green: #3fb950; --amber: #d29922; --red: #f85149; --blue: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 16px; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); flex: none; }
+  .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .big { font-size: 36px; font-weight: 600; margin-top: 4px; }
+  .big small { font-size: 16px; color: var(--muted); font-weight: 400; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--blue); transition: width .4s; }
+  .relays { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+  .relay { border: 1px solid var(--line); border-radius: 10px; padding: 12px 4px; text-align: center; font-weight: 600; }
+  .relay.on { background: var(--green); color: #0b0f14; border-color: var(--green); }
+  .relay small { display: block; font-weight: 400; font-size: 11px; opacity: .75; margin-top: 2px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; }
+  .row + .row { border-top: 1px solid var(--line); }
+  button { font: inherit; border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .btn-on { background: var(--green); color: #0b0f14; }
+  .btn-off { background: var(--red); color: #fff; }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); padding: 6px 12px; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border-radius: 0; background: transparent; color: var(--muted); padding: 8px 12px; }
+  .seg button.active { background: var(--blue); color: #0b0f14; }
+  input { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line);
+          background: var(--bg); color: var(--text); font: inherit; margin: 6px 0 12px; }
+  .err { color: var(--red); font-size: 13px; min-height: 18px; margin-top: 8px; }
+  .note { font-size: 13px; color: var(--muted); }
+  .warn { background: #3a2a0d; border: 1px solid var(--amber); color: var(--amber);
+          border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+  .hidden { display: none !important; }
+  @media (max-width: 480px) { .big { font-size: 28px; } .relays { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- LOGIN -->
+  <div id="loginView" class="card hidden" style="max-width:360px;margin:60px auto;">
+    <h1 style="margin-bottom:16px;">ESP32 IoT Monitor</h1>
+    <form id="loginForm">
+      <label class="label" for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" required>
+      <label class="label" for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <button class="btn-on" type="submit" style="width:100%;">Log in</button>
+      <div id="loginErr" class="err"></div>
+    </form>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="dashView" class="hidden">
+    <header>
+      <h1>ESP32 IoT Monitor</h1>
+      <div class="status"><span id="dot" class="dot"></span><span id="statusText">Connecting…</span></div>
+    </header>
+
+    <div id="sensorWarn" class="warn hidden">DHT22 read error on the device. Showing the last good reading.</div>
+    <div id="offWarn" class="warn hidden">System is OFF. All relays are off.</div>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="label">Temperature</div>
+        <div class="big"><span id="temp">--</span> <small>°C</small></div>
+        <div class="bar"><div id="tempBar"></div></div>
+      </div>
+      <div class="card">
+        <div class="label">Humidity</div>
+        <div class="big"><span id="hum">--</span> <small>%</small></div>
+        <div class="bar"><div id="humBar"></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">Relays</div>
+      <div class="relays">
+        <div id="r1" class="relay">R1<small>&lt; 30 °C</small></div>
+        <div id="r2" class="relay">R2<small>30–31 °C</small></div>
+        <div id="r3" class="relay">R3<small>31–32 °C</small></div>
+        <div id="r4" class="relay">R4<small>≥ 32 °C</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <div>Main system</div>
+          <div class="note">Device reports: <span id="sysActual">--</span></div>
+        </div>
+        <button id="btnSystem" class="btn-on">--</button>
+      </div>
+      <div class="row">
+        <div>OLED display</div>
+        <div class="seg">
+          <button id="mode0">Temp / Hum</button>
+          <button id="mode1">Relays</button>
+        </div>
+      </div>
+      <div id="ctrlErr" class="err"></div>
+    </div>
+
+    <div class="row" style="padding:0;">
+      <span class="note" id="signal"></span>
+      <button id="btnLogout" class="btn-ghost">Log out</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getDatabase, ref, onValue, set }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+  // ===== PASTE YOUR firebaseConfig HERE (Step 5) =====
+  const firebaseConfig = {
+  apiKey: "AIzaSyAHNNTgJR5NIPaYjcj-0Hyrs5D0Kyt7-v8",
+  authDomain: "lesson-9---web-development.firebaseapp.com",
+  databaseURL: "https://lesson-9---web-development-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "lesson-9---web-development",
+  storageBucket: "lesson-9---web-development.firebasestorage.app",
+  messagingSenderId: "995157772070",
+  appId: "1:995157772070:web:074665056df47e4c2563e7"
+};
+  // ===================================================
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getDatabase(app);
+  const $ = (id) => document.getElementById(id);
+
+  let unsubs = [];
+  let lastSeen = 0;
+  let serverOffset = 0;
+  let ctrl = { systemActive: 1, displayMode: 0 };
+
+  // ---------- Login ----------
+  $("loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("loginErr").textContent = "";
+    try {
+      await signInWithEmailAndPassword(auth, $("email").value.trim(), $("password").value);
+    } catch (err) {
+      $("loginErr").textContent = "Login failed: " + (err.code || err.message);
+    }
+  });
+  $("btnLogout").onclick = () => signOut(auth);
+
+  onAuthStateChanged(auth, (user) => {
+    unsubs.forEach((u) => u());
+    unsubs = [];
+    $("loginView").classList.toggle("hidden", !!user);
+    $("dashView").classList.toggle("hidden", !user);
+    if (!user) return;
+
+    unsubs.push(onValue(ref(db, ".info/serverTimeOffset"), (s) => { serverOffset = s.val() || 0; }));
+    unsubs.push(onValue(ref(db, "device"), (s) => renderDevice(s.val() || {}), showCtrlErr));
+    unsubs.push(onValue(ref(db, "control"), (s) => {
+      const v = s.val() || {};
+      ctrl.systemActive = v.systemActive ?? 1;
+      ctrl.displayMode = v.displayMode ?? 0;
+      renderControl();
+    }, showCtrlErr));
+  });
+
+  // ---------- Render ----------
+  function renderDevice(d) {
+    lastSeen = d.lastSeen || 0;
+
+    const t = typeof d.temperature === "number" ? d.temperature : null;
+    const h = typeof d.humidity === "number" ? d.humidity : null;
+    $("temp").textContent = t === null ? "--" : t.toFixed(1);
+    $("hum").textContent = h === null ? "--" : h.toFixed(1);
+    $("tempBar").style.width = t === null ? "0" : Math.min(Math.max(t, 0), 50) / 50 * 100 + "%";
+    $("tempBar").style.background = t === null ? "" : t >= 32 ? "var(--red)" : t >= 30 ? "var(--amber)" : "var(--blue)";
+    $("humBar").style.width = h === null ? "0" : Math.min(Math.max(h, 0), 100) + "%";
+
+    for (let i = 1; i <= 4; i++) $("r" + i).classList.toggle("on", d["relay" + i] === 1);
+
+    const active = d.systemActive === 1;
+    $("sysActual").textContent = d.systemActive === undefined ? "--" : active ? "ON" : "OFF";
+    $("offWarn").classList.toggle("hidden", d.systemActive !== 0);
+    $("sensorWarn").classList.toggle("hidden", !(active && d.sensorOk === 0));
+    $("signal").textContent = typeof d.rssi === "number" ? "WiFi signal: " + d.rssi + " dBm" : "";
+  }
+
+  function renderControl() {
+    const on = ctrl.systemActive === 1;
+    $("btnSystem").textContent = on ? "ON — tap to turn OFF" : "OFF — tap to turn ON";
+    $("btnSystem").className = on ? "btn-on" : "btn-off";
+    $("mode0").classList.toggle("active", ctrl.displayMode === 0);
+    $("mode1").classList.toggle("active", ctrl.displayMode === 1);
+  }
+
+  function showCtrlErr(err) {
+    $("ctrlErr").textContent = "Error: " + (err.code || err.message);
+  }
+
+  // ---------- Controls ----------
+  async function write(path, value, btn) {
+    $("ctrlErr").textContent = "";
+    if (btn) btn.disabled = true;
+    try { await set(ref(db, path), value); }
+    catch (err) { showCtrlErr(err); }
+    finally { if (btn) btn.disabled = false; }
+  }
+  $("btnSystem").onclick = (e) => write("control/systemActive", ctrl.systemActive === 1 ? 0 : 1, e.currentTarget);
+  $("mode0").onclick = () => write("control/displayMode", 0);
+  $("mode1").onclick = () => write("control/displayMode", 1);
+
+  // ---------- Online indicator ----------
+  setInterval(() => {
+    if (!lastSeen) { $("statusText").textContent = "Waiting for device…"; $("dot").classList.remove("on"); return; }
+    const age = Math.max(0, Math.round((Date.now() + serverOffset - lastSeen) / 1000));
+    const online = age < 10;
+    $("dot").classList.toggle("on", online);
+    $("statusText").textContent = online
+      ? "Online · updated " + age + "s ago"
+      : "Offline · last seen " + new Date(lastSeen).toLocaleString();
+  }, 1000);
+</script>
+</body>
+</html>
