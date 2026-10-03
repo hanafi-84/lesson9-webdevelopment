@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ESP32 IoT Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root {
     --bg: #0f1419; --card: #1a2129; --line: #2a333d;
@@ -13,13 +14,20 @@
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
          background: var(--bg); color: var(--text); }
-  .wrap { max-width: 720px; margin: 0 auto; padding: 16px; }
-  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 12px; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
   h1 { font-size: 18px; margin: 0; }
+  h2 { font-size: 15px; margin: 0; }
   .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); flex: none; }
   .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  nav { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  nav button { background: transparent; color: var(--muted); border-radius: 0; padding: 10px 14px;
+               border-bottom: 2px solid transparent; }
+  nav button.active { color: var(--text); border-bottom-color: var(--blue); }
+  nav .spacer { flex: 1; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
   .big { font-size: 36px; font-weight: 600; margin-top: 4px; }
@@ -38,16 +46,27 @@
   .btn-off { background: var(--red); color: #fff; }
   .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); padding: 6px 12px; }
   .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .seg button { border-radius: 0; background: transparent; color: var(--muted); padding: 8px 12px; }
+  .seg button { border-radius: 0; background: transparent; color: var(--muted); padding: 6px 12px; font-size: 13px; }
   .seg button.active { background: var(--blue); color: #0b0f14; }
+  .chart-box { position: relative; height: 280px; }
   input { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line);
           background: var(--bg); color: var(--text); font: inherit; margin: 6px 0 12px; }
   .err { color: var(--red); font-size: 13px; min-height: 18px; margin-top: 8px; }
   .note { font-size: 13px; color: var(--muted); }
   .warn { background: #3a2a0d; border: 1px solid var(--amber); color: var(--amber);
           border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+  .table-box { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--card); color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .empty { padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
   .hidden { display: none !important; }
-  @media (max-width: 480px) { .big { font-size: 28px; } .relays { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) {
+    .big { font-size: 28px; }
+    .relays { grid-template-columns: repeat(2, 1fr); }
+    .chart-box { height: 230px; }
+  }
 </style>
 </head>
 <body>
@@ -66,61 +85,120 @@
     </form>
   </div>
 
-  <!-- DASHBOARD -->
-  <div id="dashView" class="hidden">
+  <!-- APP -->
+  <div id="appView" class="hidden">
     <header>
       <h1>ESP32 IoT Monitor</h1>
       <div class="status"><span id="dot" class="dot"></span><span id="statusText">Connecting…</span></div>
     </header>
 
-    <div id="sensorWarn" class="warn hidden">DHT22 read error on the device. Showing the last good reading.</div>
-    <div id="offWarn" class="warn hidden">System is OFF. All relays are off.</div>
+    <nav>
+      <button id="tabDash" class="active">Dashboard</button>
+      <button id="tabLog">Log</button>
+      <span class="spacer"></span>
+      <button id="btnLogout" style="color:var(--muted);background:transparent;">Log out</button>
+    </nav>
 
-    <div class="grid2">
-      <div class="card">
-        <div class="label">Temperature</div>
-        <div class="big"><span id="temp">--</span> <small>°C</small></div>
-        <div class="bar"><div id="tempBar"></div></div>
-      </div>
-      <div class="card">
-        <div class="label">Humidity</div>
-        <div class="big"><span id="hum">--</span> <small>%</small></div>
-        <div class="bar"><div id="humBar"></div></div>
-      </div>
-    </div>
+    <!-- DASHBOARD PAGE -->
+    <section id="dashPage">
+      <div id="sensorWarn" class="warn hidden">DHT22 read error on the device. Showing the last good reading.</div>
+      <div id="offWarn" class="warn hidden">System is OFF. All relays are off.</div>
 
-    <div class="card">
-      <div class="label">Relays</div>
-      <div class="relays">
-        <div id="r1" class="relay">R1<small>&lt; 30 °C</small></div>
-        <div id="r2" class="relay">R2<small>30–31 °C</small></div>
-        <div id="r3" class="relay">R3<small>31–32 °C</small></div>
-        <div id="r4" class="relay">R4<small>≥ 32 °C</small></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <div>
-          <div>Main system</div>
-          <div class="note">Device reports: <span id="sysActual">--</span></div>
+      <div class="grid2">
+        <div class="card">
+          <div class="label">Temperature</div>
+          <div class="big"><span id="temp">--</span> <small>°C</small></div>
+          <div class="bar"><div id="tempBar"></div></div>
         </div>
-        <button id="btnSystem" class="btn-on">--</button>
-      </div>
-      <div class="row">
-        <div>OLED display</div>
-        <div class="seg">
-          <button id="mode0">Temp / Hum</button>
-          <button id="mode1">Relays</button>
+        <div class="card">
+          <div class="label">Humidity</div>
+          <div class="big"><span id="hum">--</span> <small>%</small></div>
+          <div class="bar"><div id="humBar"></div></div>
         </div>
       </div>
-      <div id="ctrlErr" class="err"></div>
-    </div>
 
-    <div class="row" style="padding:0;">
-      <span class="note" id="signal"></span>
-      <button id="btnLogout" class="btn-ghost">Log out</button>
-    </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Temperature &amp; humidity</h2>
+          <div class="seg" id="chartRange">
+            <button data-min="15" class="active">Live</button>
+            <button data-min="60">1 h</button>
+            <button data-min="360">6 h</button>
+            <button data-min="1440">24 h</button>
+          </div>
+        </div>
+        <div class="chart-box"><canvas id="chart"></canvas></div>
+        <div class="note" style="margin-top:8px;">Live view updates every 2 s. Longer ranges use the 1-minute history log.</div>
+      </div>
+
+      <div class="card">
+        <div class="label">Relays</div>
+        <div class="relays">
+          <div id="r1" class="relay">R1<small>&lt; 30 °C</small></div>
+          <div id="r2" class="relay">R2<small>30–31 °C</small></div>
+          <div id="r3" class="relay">R3<small>31–32 °C</small></div>
+          <div id="r4" class="relay">R4<small>≥ 32 °C</small></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row">
+          <div>
+            <div>Main system</div>
+            <div class="note">Device reports: <span id="sysActual">--</span></div>
+          </div>
+          <button id="btnSystem" class="btn-on">--</button>
+        </div>
+        <div class="row">
+          <div>OLED display</div>
+          <div class="seg">
+            <button id="mode0">Temp / Hum</button>
+            <button id="mode1">Relays</button>
+          </div>
+        </div>
+        <div id="ctrlErr" class="err"></div>
+      </div>
+
+      <div class="note" id="signal"></div>
+    </section>
+
+    <!-- LOG PAGE -->
+    <section id="logPage" class="hidden">
+      <div class="card">
+        <div class="card-head">
+          <h2>Readings <span class="note" id="readCount"></span></h2>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <div class="seg" id="logRange">
+              <button data-min="60">1 h</button>
+              <button data-min="360" class="active">6 h</button>
+              <button data-min="1440">24 h</button>
+            </div>
+            <button class="btn-ghost" id="csvReadings">Download CSV</button>
+          </div>
+        </div>
+        <div class="table-box">
+          <table>
+            <thead><tr><th>Time</th><th class="num">Temp (°C)</th><th class="num">Humidity (%)</th><th>Active relay</th><th>System</th></tr></thead>
+            <tbody id="readingsBody"></tbody>
+          </table>
+          <div id="readingsEmpty" class="empty hidden">No readings in this range yet. The device saves one every minute.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Events <span class="note" id="eventCount"></span></h2>
+          <button class="btn-ghost" id="csvEvents">Download CSV</button>
+        </div>
+        <div class="table-box">
+          <table>
+            <thead><tr><th>Time</th><th>Event</th></tr></thead>
+            <tbody id="eventsBody"></tbody>
+          </table>
+          <div id="eventsEmpty" class="empty hidden">No events yet.</div>
+        </div>
+      </div>
+    </section>
   </div>
 </div>
 
@@ -128,11 +206,11 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
     from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-  import { getDatabase, ref, onValue, set }
+  import { getDatabase, ref, onValue, set, query, limitToLast, onChildAdded }
     from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-  // ===== PASTE YOUR firebaseConfig HERE (Step 5) =====
-  const firebaseConfig = {
+  // ===== PASTE YOUR firebaseConfig HERE =====
+const firebaseConfig = {
   apiKey: "AIzaSyAHNNTgJR5NIPaYjcj-0Hyrs5D0Kyt7-v8",
   authDomain: "lesson-9---web-development.firebaseapp.com",
   databaseURL: "https://lesson-9---web-development-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -141,7 +219,12 @@
   messagingSenderId: "995157772070",
   appId: "1:995157772070:web:074665056df47e4c2563e7"
 };
-  // ===================================================
+  // ==========================================
+
+  const HISTORY_LIMIT = 1440;   // 24 h of 1-minute records
+  const EVENTS_LIMIT = 300;
+  const LIVE_KEEP_MS = 15 * 60 * 1000;
+  const GAP_MS = 150 * 1000;    // break the line if no data for 2.5 min
 
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
@@ -152,6 +235,164 @@
   let lastSeen = 0;
   let serverOffset = 0;
   let ctrl = { systemActive: 1, displayMode: 0 };
+  let history = [];   // {ts, t, h, r, s}
+  let live = [];      // {ts, t, h}
+  let events = [];    // {ts, msg}
+  let chartMin = 15;
+  let logMin = 360;
+  let renderQueued = false;
+
+  const now = () => Date.now() + serverOffset;
+  const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const fmtFull = (ms) => new Date(ms).toLocaleString([], { year: "numeric", month: "2-digit", day: "2-digit",
+                                                             hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+  // ---------- Chart ----------
+  const gridColor = "#2a333d", tickColor = "#8b98a5";
+  const chart = new Chart($("chart"), {
+    type: "line",
+    data: { datasets: [
+      { label: "Temperature (°C)", data: [], yAxisID: "yT", borderColor: "#f85149", backgroundColor: "#f85149",
+        borderWidth: 2, pointRadius: 0, tension: 0.25, spanGaps: false },
+      { label: "Humidity (%)", data: [], yAxisID: "yH", borderColor: "#58a6ff", backgroundColor: "#58a6ff",
+        borderWidth: 2, pointRadius: 0, tension: 0.25, spanGaps: false }
+    ]},
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false, parsing: false, normalized: true,
+      interaction: { mode: "nearest", axis: "x", intersect: false },
+      scales: {
+        x: { type: "linear", grid: { color: gridColor },
+             ticks: { color: tickColor, maxTicksLimit: 6, callback: (v) => fmtTime(v) } },
+        yT: { position: "left", grid: { color: gridColor }, ticks: { color: "#f85149" },
+              title: { display: true, text: "°C", color: "#f85149" } },
+        yH: { position: "right", grid: { drawOnChartArea: false }, ticks: { color: "#58a6ff" },
+              suggestedMin: 0, suggestedMax: 100, title: { display: true, text: "%", color: "#58a6ff" } }
+      },
+      plugins: {
+        legend: { labels: { color: tickColor, boxWidth: 12 } },
+        tooltip: { callbacks: { title: (items) => items.length ? fmtFull(items[0].parsed.x) : "" } }
+      }
+    }
+  });
+
+  function renderChart() {
+    const to = now(), from = to - chartMin * 60000;
+    const pts = history.filter((p) => p.ts >= from && typeof p.t === "number")
+      .concat(live.filter((p) => p.ts >= from))
+      .sort((a, b) => a.ts - b.ts);
+
+    const temp = [], hum = [];
+    for (let i = 0; i < pts.length; i++) {
+      if (i > 0 && pts[i].ts - pts[i - 1].ts > GAP_MS) {
+        const mid = (pts[i].ts + pts[i - 1].ts) / 2;
+        temp.push({ x: mid, y: null }); hum.push({ x: mid, y: null });
+      }
+      temp.push({ x: pts[i].ts, y: pts[i].t });
+      hum.push({ x: pts[i].ts, y: pts[i].h });
+    }
+    chart.data.datasets[0].data = temp;
+    chart.data.datasets[1].data = hum;
+    chart.options.scales.x.min = from;
+    chart.options.scales.x.max = to;
+    chart.update("none");
+  }
+
+  // ---------- Log tables ----------
+  function cell(text, cls) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (cls) td.className = cls;
+    return td;
+  }
+
+  function readingsInRange() {
+    const from = now() - logMin * 60000;
+    return history.filter((p) => p.ts >= from).slice().reverse();
+  }
+
+  function renderLog() {
+    const rows = readingsInRange();
+    const frag = document.createDocumentFragment();
+    for (const p of rows) {
+      const tr = document.createElement("tr");
+      tr.append(
+        cell(fmtFull(p.ts)),
+        cell(typeof p.t === "number" ? p.t.toFixed(1) : "error", "num"),
+        cell(typeof p.h === "number" ? p.h.toFixed(1) : "error", "num"),
+        cell(p.r ? "R" + p.r : "—"),
+        cell(p.s === 1 ? "ON" : "OFF")
+      );
+      frag.append(tr);
+    }
+    $("readingsBody").replaceChildren(frag);
+    $("readingsEmpty").classList.toggle("hidden", rows.length > 0);
+    $("readCount").textContent = rows.length ? "(" + rows.length + ")" : "";
+
+    const evFrag = document.createDocumentFragment();
+    for (const e of events.slice().reverse()) {
+      const tr = document.createElement("tr");
+      tr.append(cell(fmtFull(e.ts)), cell(e.msg));
+      evFrag.append(tr);
+    }
+    $("eventsBody").replaceChildren(evFrag);
+    $("eventsEmpty").classList.toggle("hidden", events.length > 0);
+    $("eventCount").textContent = events.length ? "(" + events.length + ")" : "";
+  }
+
+  function scheduleRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      renderChart();
+      if (!$("logPage").classList.contains("hidden")) renderLog();
+    });
+  }
+
+  // ---------- CSV download ----------
+  function downloadCSV(name, header, rows) {
+    const esc = (v) => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = [header, ...rows].map((r) => r.map(esc).join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+
+  $("csvReadings").onclick = () => downloadCSV("readings-" + stamp() + ".csv",
+    ["time", "temperature_c", "humidity_pct", "active_relay", "system"],
+    readingsInRange().reverse().map((p) => [fmtFull(p.ts), p.t ?? "", p.h ?? "", p.r ? "R" + p.r : "", p.s === 1 ? "ON" : "OFF"]));
+
+  $("csvEvents").onclick = () => downloadCSV("events-" + stamp() + ".csv",
+    ["time", "event"], events.map((e) => [fmtFull(e.ts), e.msg]));
+
+  // ---------- Range buttons & tabs ----------
+  function setupSeg(id, onPick) {
+    const seg = $(id);
+    seg.addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      seg.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+      onPick(Number(btn.dataset.min));
+    });
+  }
+  setupSeg("chartRange", (m) => { chartMin = m; renderChart(); });
+  setupSeg("logRange", (m) => { logMin = m; renderLog(); });
+
+  function showTab(log) {
+    $("tabDash").classList.toggle("active", !log);
+    $("tabLog").classList.toggle("active", log);
+    $("dashPage").classList.toggle("hidden", log);
+    $("logPage").classList.toggle("hidden", !log);
+    if (log) renderLog(); else renderChart();
+  }
+  $("tabDash").onclick = () => showTab(false);
+  $("tabLog").onclick = () => showTab(true);
 
   // ---------- Login ----------
   $("loginForm").addEventListener("submit", async (e) => {
@@ -168,8 +409,9 @@
   onAuthStateChanged(auth, (user) => {
     unsubs.forEach((u) => u());
     unsubs = [];
+    history = []; live = []; events = []; lastSeen = 0;
     $("loginView").classList.toggle("hidden", !!user);
-    $("dashView").classList.toggle("hidden", !user);
+    $("appView").classList.toggle("hidden", !user);
     if (!user) return;
 
     unsubs.push(onValue(ref(db, ".info/serverTimeOffset"), (s) => { serverOffset = s.val() || 0; }));
@@ -180,14 +422,39 @@
       ctrl.displayMode = v.displayMode ?? 0;
       renderControl();
     }, showCtrlErr));
+    unsubs.push(onChildAdded(query(ref(db, "history"), limitToLast(HISTORY_LIMIT)), (s) => {
+      const v = s.val();
+      if (v && typeof v.ts === "number") {
+        history.push(v);
+        if (history.length > HISTORY_LIMIT) history.shift();
+        scheduleRender();
+      }
+    }, showCtrlErr));
+    unsubs.push(onChildAdded(query(ref(db, "events"), limitToLast(EVENTS_LIMIT)), (s) => {
+      const v = s.val();
+      if (v && typeof v.ts === "number") {
+        events.push({ ts: v.ts, msg: String(v.msg ?? "") });
+        if (events.length > EVENTS_LIMIT) events.shift();
+        scheduleRender();
+      }
+    }, showCtrlErr));
+
+    showTab(false);
   });
 
-  // ---------- Render ----------
+  // ---------- Live device data ----------
   function renderDevice(d) {
-    lastSeen = d.lastSeen || 0;
-
     const t = typeof d.temperature === "number" ? d.temperature : null;
     const h = typeof d.humidity === "number" ? d.humidity : null;
+
+    if (d.lastSeen && d.lastSeen !== lastSeen && t !== null && d.systemActive === 1 && d.sensorOk === 1) {
+      live.push({ ts: d.lastSeen, t, h });
+      const cutoff = now() - LIVE_KEEP_MS;
+      while (live.length && live[0].ts < cutoff) live.shift();
+      scheduleRender();
+    }
+    lastSeen = d.lastSeen || 0;
+
     $("temp").textContent = t === null ? "--" : t.toFixed(1);
     $("hum").textContent = h === null ? "--" : h.toFixed(1);
     $("tempBar").style.width = t === null ? "0" : Math.min(Math.max(t, 0), 50) / 50 * 100 + "%";
@@ -227,16 +494,19 @@
   $("mode0").onclick = () => write("control/displayMode", 0);
   $("mode1").onclick = () => write("control/displayMode", 1);
 
-  // ---------- Online indicator ----------
+  // ---------- Online indicator + chart scroll ----------
   setInterval(() => {
-    if (!lastSeen) { $("statusText").textContent = "Waiting for device…"; $("dot").classList.remove("on"); return; }
-    const age = Math.max(0, Math.round((Date.now() + serverOffset - lastSeen) / 1000));
-    const online = age < 10;
-    $("dot").classList.toggle("on", online);
-    $("statusText").textContent = online
-      ? "Online · updated " + age + "s ago"
-      : "Offline · last seen " + new Date(lastSeen).toLocaleString();
-  }, 1000);
+    if (!lastSeen) { $("statusText").textContent = "Waiting for device…"; $("dot").classList.remove("on"); }
+    else {
+      const age = Math.max(0, Math.round((now() - lastSeen) / 1000));
+      const online = age < 10;
+      $("dot").classList.toggle("on", online);
+      $("statusText").textContent = online
+        ? "Online · updated " + age + "s ago"
+        : "Offline · last seen " + fmtFull(lastSeen);
+    }
+    if (!$("dashPage").classList.contains("hidden")) renderChart();
+  }, 5000);
 </script>
 </body>
 </html>
